@@ -4,15 +4,35 @@ import { vehicleAPI } from '../../api';
 import { Modal, Badge, PageHeader, SearchBar, FilterTags, FormGroup, Input, Select, fmtDate } from '../../components/common';
 import { Spinner } from '../../components/common';
 
-const EMPTY = { regNumber:'', type:'Truck', make:'', model:'', year:new Date().getFullYear(), capacity:'', fuelType:'Diesel', status:'Active', insuranceExpiry:'', fitnessExpiry:'', permitExpiry:'', notes:'' };
+const EMPTY = {
+  regNumber: '', type: 'Truck', make: '', model: '',
+  year: new Date().getFullYear(), capacity: '',
+  fuelType: 'Diesel', status: 'Active',
+  insuranceExpiry: '', fitnessExpiry: '', permitExpiry: '', notes: '',
+};
 
-const VehicleForm = ({ initial, vehicles, onSave, onClose }) => {
-  const [form, setForm] = useState(initial || EMPTY);
+const toForm = (v) => ({
+  regNumber:       v.reg_number        || '',
+  type:            v.type              || 'Truck',
+  make:            v.make              || '',
+  model:           v.model             || '',
+  year:            v.year              || new Date().getFullYear(),
+  capacity:        v.capacity          || '',
+  fuelType:        v.fuel_type         || 'Diesel',
+  status:          v.status            || 'Active',
+  insuranceExpiry: v.insurance_expiry?.slice(0, 10) || '',
+  fitnessExpiry:   v.fitness_expiry?.slice(0, 10)   || '',
+  permitExpiry:    v.permit_expiry?.slice(0, 10)     || '',
+  notes:           v.notes             || '',
+});
+
+const VehicleForm = ({ initial, onSave, onClose }) => {
+  const [form,   setForm]   = useState(initial ? toForm(initial) : EMPTY);
   const [saving, setSaving] = useState(false);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const submit = async () => {
-    if (!form.regNumber) return toast.error('Registration number required');
+    if (!form.regNumber.trim()) return toast.error('Registration number required');
     setSaving(true);
     try { await onSave(form); onClose(); }
     catch (e) { toast.error(e.response?.data?.message || 'Save failed'); }
@@ -53,13 +73,13 @@ const VehicleForm = ({ initial, vehicles, onSave, onClose }) => {
           </Select>
         </FormGroup>
         <FormGroup label="Insurance Expiry">
-          <Input type="date" value={form.insuranceExpiry?.slice?.(0,10) || ''} onChange={set('insuranceExpiry')} />
+          <Input type="date" value={form.insuranceExpiry} onChange={set('insuranceExpiry')} />
         </FormGroup>
         <FormGroup label="Fitness Certificate Expiry">
-          <Input type="date" value={form.fitnessExpiry?.slice?.(0,10) || ''} onChange={set('fitnessExpiry')} />
+          <Input type="date" value={form.fitnessExpiry} onChange={set('fitnessExpiry')} />
         </FormGroup>
         <FormGroup label="Permit Expiry">
-          <Input type="date" value={form.permitExpiry?.slice?.(0,10) || ''} onChange={set('permitExpiry')} />
+          <Input type="date" value={form.permitExpiry} onChange={set('permitExpiry')} />
         </FormGroup>
         <FormGroup label="Notes" full>
           <textarea className="form-textarea" value={form.notes} onChange={set('notes')} />
@@ -67,7 +87,9 @@ const VehicleForm = ({ initial, vehicles, onSave, onClose }) => {
       </div>
       <div className="modal-footer">
         <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Saving…' : '💾 Save Vehicle'}</button>
+        <button className="btn btn-primary" onClick={submit} disabled={saving}>
+          {saving ? 'Saving…' : '💾 Save Vehicle'}
+        </button>
       </div>
     </>
   );
@@ -75,47 +97,67 @@ const VehicleForm = ({ initial, vehicles, onSave, onClose }) => {
 
 const Vehicles = () => {
   const [vehicles, setVehicles] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [search,  setSearch]    = useState('');
-  const [filter,  setFilter]    = useState('All');
-  const [modal,   setModal]     = useState(null); // null | { mode:'add'|'edit', data? }
+  const [loading,  setLoading]  = useState(true);
+  const [search,   setSearch]   = useState('');
+  const [filter,   setFilter]   = useState('All');
+  const [modal,    setModal]    = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await vehicleAPI.list({ search: search || undefined, status: filter !== 'All' ? filter : undefined });
+      const r = await vehicleAPI.list({
+        search: search || undefined,
+        status: filter !== 'All' ? filter : undefined,
+      });
       setVehicles(r.data.data);
-    } finally { setLoading(false); }
+    } catch (e) {
+      toast.error('Failed to load vehicles');
+    } finally {
+      setLoading(false);
+    }
   }, [search, filter]);
 
   useEffect(() => { load(); }, [load]);
 
   const save = async (form) => {
     if (modal.mode === 'edit') {
-      await vehicleAPI.update(modal.data._id, form);
+      const id = modal.data?.id;
+      if (!id) return toast.error('Vehicle ID missing');
+      await vehicleAPI.update(id, form);
       toast.success('Vehicle updated');
     } else {
       await vehicleAPI.create(form);
       toast.success('Vehicle added');
     }
-    setModal(null); load();
+    setModal(null);
+    load();
   };
 
   const remove = async (v) => {
-    if (!window.confirm(`Delete ${v.regNumber}?`)) return;
-    await vehicleAPI.remove(v._id);
-    toast.success('Deleted'); load();
+    if (!v?.id) return toast.error('Vehicle ID missing');
+    if (!window.confirm(`Delete ${v.reg_number}?`)) return;
+    try {
+      await vehicleAPI.remove(v.id);
+      toast.success('Deleted');
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Delete failed');
+    }
   };
 
-  const isExpiring = (d) => { if (!d) return false; const diff = (new Date(d) - Date.now()) / 86400000; return diff >= 0 && diff <= 30; };
+  const isExpiring = (d) => {
+    if (!d) return false;
+    const diff = (new Date(d) - Date.now()) / 86400000;
+    return diff >= 0 && diff <= 30;
+  };
 
   return (
     <div>
       <PageHeader title="Vehicle Fleet" sub={`${vehicles.length} vehicles registered`}>
-        <button className="btn btn-primary" onClick={() => setModal({ mode:'add' })}>＋ Add Vehicle</button>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>＋ Add Vehicle</button>
       </PageHeader>
 
-      <div className="flex gap-3 items-center mb-4" style={{ flexWrap:'wrap' }}>
+      <div className="flex gap-3 items-center mb-4" style={{ flexWrap: 'wrap' }}>
         <SearchBar value={search} onChange={setSearch} placeholder="Search reg, make, model…" />
         <FilterTags options={['All','Active','On Trip','Maintenance','Inactive']} value={filter} onChange={setFilter} />
       </div>
@@ -133,22 +175,35 @@ const Vehicles = () => {
               </thead>
               <tbody>
                 {vehicles.length === 0 ? (
-                  <tr><td colSpan={11}><div className="empty-state"><div className="empty-icon">🚛</div><div className="empty-text">No vehicles found</div></div></td></tr>
+                  <tr><td colSpan={11}>
+                    <div className="empty-state">
+                      <div className="empty-icon">🚛</div>
+                      <div className="empty-text">No vehicles found</div>
+                    </div>
+                  </td></tr>
                 ) : vehicles.map(v => (
-                  <tr key={v._id}>
-                    <td><span className="badge badge-gray">{v.vehicleId}</span></td>
-                    <td style={{ fontWeight:600 }}>{v.regNumber}</td>
+                  <tr key={v.id}>
+                    <td><span className="badge badge-gray">{v.vehicle_id}</span></td>
+                    <td style={{ fontWeight: 600 }}>{v.reg_number}</td>
                     <td>{v.type}</td>
                     <td>{v.make} {v.model} {v.year && `(${v.year})`}</td>
                     <td>{v.capacity || '—'}</td>
-                    <td style={{ fontSize:12 }}>{v.driver?.fullName || <span style={{color:'var(--text3)'}}>Unassigned</span>}</td>
+                    <td style={{ fontSize: 12 }}>
+                      {v.drivers?.[0]?.full_name || <span style={{ color: 'var(--text3)' }}>Unassigned</span>}
+                    </td>
                     <td><Badge status={v.status} /></td>
-                    <td style={{ color: isExpiring(v.insuranceExpiry) ? 'var(--red)' : 'inherit', fontSize:12 }}>{fmtDate(v.insuranceExpiry)}</td>
-                    <td style={{ color: isExpiring(v.fitnessExpiry)   ? 'var(--red)' : 'inherit', fontSize:12 }}>{fmtDate(v.fitnessExpiry)}</td>
-                    <td style={{ color: isExpiring(v.permitExpiry)    ? 'var(--red)' : 'inherit', fontSize:12 }}>{fmtDate(v.permitExpiry)}</td>
+                    <td style={{ color: isExpiring(v.insurance_expiry) ? 'var(--red)' : 'inherit', fontSize: 12 }}>
+                      {fmtDate(v.insurance_expiry)}
+                    </td>
+                    <td style={{ color: isExpiring(v.fitness_expiry) ? 'var(--red)' : 'inherit', fontSize: 12 }}>
+                      {fmtDate(v.fitness_expiry)}
+                    </td>
+                    <td style={{ color: isExpiring(v.permit_expiry) ? 'var(--red)' : 'inherit', fontSize: 12 }}>
+                      {fmtDate(v.permit_expiry)}
+                    </td>
                     <td>
                       <div className="tbl-actions">
-                        <button className="btn btn-secondary btn-sm" onClick={() => setModal({ mode:'edit', data:v })}>✏️</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setModal({ mode: 'edit', data: v })}>✏️</button>
                         <button className="btn btn-danger btn-sm"    onClick={() => remove(v)}>🗑</button>
                       </div>
                     </td>
@@ -161,7 +216,11 @@ const Vehicles = () => {
       </div>
 
       {modal && (
-        <Modal title={modal.mode === 'edit' ? 'Edit Vehicle' : 'Add Vehicle'} onClose={() => setModal(null)} size="modal-lg">
+        <Modal
+          title={modal.mode === 'edit' ? 'Edit Vehicle' : 'Add Vehicle'}
+          onClose={() => setModal(null)}
+          size="modal-lg"
+        >
           <VehicleForm initial={modal.data} onSave={save} onClose={() => setModal(null)} />
         </Modal>
       )}

@@ -4,15 +4,31 @@ import { driverAPI, vehicleAPI } from '../../api';
 import { Modal, Badge, PageHeader, SearchBar, FormGroup, Input, Select, fmtDate } from '../../components/common';
 import { Spinner } from '../../components/common';
 
-const EMPTY = { fullName:'', phone:'', licenseNumber:'', licenseExpiry:'', age:'', experienceYrs:'', address:'', status:'Active', vehicleId:'' };
+const EMPTY = {
+  fullName: '', phone: '', licenseNumber: '', licenseExpiry: '',
+  age: '', experienceYrs: '', address: '', status: 'Active', vehicleId: '',
+};
+
+const toForm = (d) => ({
+  fullName:       d.full_name       || '',
+  phone:          d.phone           || '',
+  licenseNumber:  d.license_number  || '',
+  licenseExpiry:  d.license_expiry?.slice(0, 10) || '',
+  age:            d.age             || '',
+  experienceYrs:  d.experience_yrs  || '',
+  address:        d.address         || '',
+  status:         d.status          || 'Active',
+  vehicleId:      d.vehicle_id      || '',
+});
 
 const DriverForm = ({ initial, vehicles, onSave, onClose }) => {
-  const [form, setForm] = useState(initial ? { ...initial, vehicleId: initial.vehicleId?._id || initial.vehicleId || '', licenseExpiry: initial.licenseExpiry?.slice?.(0,10)||'' } : EMPTY);
+  const [form,   setForm]   = useState(initial ? toForm(initial) : EMPTY);
   const [saving, setSaving] = useState(false);
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const submit = async () => {
-    if (!form.fullName || !form.phone || !form.licenseNumber) return toast.error('Name, phone and license required');
+    if (!form.fullName || !form.phone || !form.licenseNumber)
+      return toast.error('Name, phone and license are required');
     setSaving(true);
     try { await onSave(form); onClose(); }
     catch (e) { toast.error(e.response?.data?.message || 'Save failed'); }
@@ -36,14 +52,18 @@ const DriverForm = ({ initial, vehicles, onSave, onClose }) => {
         <FormGroup label="Assign Vehicle">
           <Select value={form.vehicleId} onChange={set('vehicleId')}>
             <option value="">— None —</option>
-            {vehicles.map(v => <option key={v._id} value={v._id}>{v.regNumber} ({v.type})</option>)}
+            {vehicles.map(v => <option key={v.id} value={v.id}>{v.reg_number} ({v.type})</option>)}
           </Select>
         </FormGroup>
-        <FormGroup label="Address" full><textarea className="form-textarea" value={form.address} onChange={set('address')} /></FormGroup>
+        <FormGroup label="Address" full>
+          <textarea className="form-textarea" value={form.address} onChange={set('address')} />
+        </FormGroup>
       </div>
       <div className="modal-footer">
         <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Saving…' : '💾 Save Driver'}</button>
+        <button className="btn btn-primary" onClick={submit} disabled={saving}>
+          {saving ? 'Saving…' : '💾 Save Driver'}
+        </button>
       </div>
     </>
   );
@@ -59,30 +79,57 @@ const Drivers = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [dr, vr] = await Promise.all([driverAPI.list({ search: search || undefined }), vehicleAPI.list()]);
-      setDrivers(dr.data.data); setVehicles(vr.data.data);
-    } finally { setLoading(false); }
+      const [dr, vr] = await Promise.all([
+        driverAPI.list({ search: search || undefined }),
+        vehicleAPI.list(),
+      ]);
+      setDrivers(dr.data.data);
+      setVehicles(vr.data.data);
+    } catch (e) {
+      toast.error('Failed to load');
+    } finally {
+      setLoading(false);
+    }
   }, [search]);
 
   useEffect(() => { load(); }, [load]);
 
   const save = async (form) => {
-    if (modal.mode === 'edit') { await driverAPI.update(modal.data._id, form); toast.success('Driver updated'); }
-    else { await driverAPI.create(form); toast.success('Driver added'); }
-    setModal(null); load();
+    if (modal.mode === 'edit') {
+      const id = modal.data?.id;
+      if (!id) return toast.error('Driver ID missing');
+      await driverAPI.update(id, form);
+      toast.success('Driver updated');
+    } else {
+      await driverAPI.create(form);
+      toast.success('Driver added');
+    }
+    setModal(null);
+    load();
   };
 
   const remove = async (d) => {
-    if (!window.confirm(`Delete ${d.fullName}?`)) return;
-    await driverAPI.remove(d._id); toast.success('Deleted'); load();
+    if (!d?.id) return toast.error('Driver ID missing');
+    if (!window.confirm(`Delete ${d.full_name}?`)) return;
+    try {
+      await driverAPI.remove(d.id);
+      toast.success('Deleted');
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Delete failed');
+    }
   };
 
-  const isExpiring = (d) => { if (!d) return false; const diff = (new Date(d) - Date.now()) / 86400000; return diff >= 0 && diff <= 30; };
+  const isExpiring = (d) => {
+    if (!d) return false;
+    const diff = (new Date(d) - Date.now()) / 86400000;
+    return diff >= 0 && diff <= 30;
+  };
 
   return (
     <div>
       <PageHeader title="Drivers" sub={`${drivers.length} registered drivers`}>
-        <button className="btn btn-primary" onClick={() => setModal({ mode:'add' })}>＋ Add Driver</button>
+        <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>＋ Add Driver</button>
       </PageHeader>
 
       <div className="flex gap-3 items-center mb-4">
@@ -92,41 +139,49 @@ const Drivers = () => {
       {loading ? <Spinner center /> : (
         <div className="grid-3" style={{ marginBottom: 20 }}>
           {drivers.map(d => (
-            <div className="card" key={d._id}>
+            <div className="card" key={d.id}>
               <div className="flex gap-3 items-center" style={{ marginBottom: 14 }}>
-                <div style={{ width:44, height:44, borderRadius:'50%', background:'linear-gradient(135deg,var(--accent),var(--purple))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:700, color:'#fff', flexShrink:0 }}>
-                  {d.fullName[0]}
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,var(--accent),var(--purple))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                  {d.full_name?.[0] || '?'}
                 </div>
                 <div>
-                  <div style={{ fontFamily:'var(--fhead)', fontWeight:700, fontSize:14 }}>{d.fullName}</div>
-                  <div style={{ color:'var(--text3)', fontSize:12 }}>{d.phone}</div>
+                  <div style={{ fontFamily: 'var(--fhead)', fontWeight: 700, fontSize: 14 }}>{d.full_name}</div>
+                  <div style={{ color: 'var(--text3)', fontSize: 12 }}>{d.phone}</div>
                 </div>
-                <div style={{ marginLeft:'auto' }}><Badge status={d.status} /></div>
+                <div style={{ marginLeft: 'auto' }}><Badge status={d.status} /></div>
               </div>
-              <div className="info-row"><span className="info-label">Driver ID</span><span className="info-val">{d.driverId}</span></div>
-              <div className="info-row"><span className="info-label">License</span><span className="info-val" style={{ fontSize:11, fontFamily:'monospace' }}>{d.licenseNumber}</span></div>
+              <div className="info-row"><span className="info-label">Driver ID</span><span className="info-val">{d.driver_id}</span></div>
+              <div className="info-row"><span className="info-label">License</span><span className="info-val" style={{ fontSize: 11, fontFamily: 'monospace' }}>{d.license_number}</span></div>
               <div className="info-row">
                 <span className="info-label">Lic. Expiry</span>
-                <span className="info-val" style={{ color: isExpiring(d.licenseExpiry) ? 'var(--red)' : 'inherit' }}>{fmtDate(d.licenseExpiry)}</span>
+                <span className="info-val" style={{ color: isExpiring(d.license_expiry) ? 'var(--red)' : 'inherit' }}>
+                  {fmtDate(d.license_expiry)}
+                </span>
               </div>
-              <div className="info-row"><span className="info-label">Experience</span><span className="info-val">{d.experienceYrs || '—'} yrs</span></div>
-              <div className="info-row"><span className="info-label">Vehicle</span><span className="info-val" style={{ fontSize:12 }}>{d.vehicleId?.regNumber || '—'}</span></div>
+              <div className="info-row"><span className="info-label">Experience</span><span className="info-val">{d.experience_yrs || '—'} yrs</span></div>
+              <div className="info-row"><span className="info-label">Vehicle</span><span className="info-val" style={{ fontSize: 12 }}>{d.vehicles?.reg_number || '—'}</span></div>
               <div className="flex gap-2 mt-4">
-                <button className="btn btn-secondary btn-sm flex-1" onClick={() => setModal({ mode:'edit', data:d })}>✏️ Edit</button>
+                <button className="btn btn-secondary btn-sm flex-1" onClick={() => setModal({ mode: 'edit', data: d })}>✏️ Edit</button>
                 <button className="btn btn-danger btn-sm" onClick={() => remove(d)}>🗑</button>
               </div>
             </div>
           ))}
-          <div className="card" style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:180, cursor:'pointer', border:'2px dashed var(--border2)' }} onClick={() => setModal({ mode:'add' })}>
-            <div style={{ textAlign:'center', color:'var(--text3)' }}>
-              <div style={{ fontSize:28, marginBottom:8 }}>＋</div><div>Add Driver</div>
+          <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 180, cursor: 'pointer', border: '2px dashed var(--border2)' }}
+            onClick={() => setModal({ mode: 'add' })}>
+            <div style={{ textAlign: 'center', color: 'var(--text3)' }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>＋</div>
+              <div>Add Driver</div>
             </div>
           </div>
         </div>
       )}
 
       {modal && (
-        <Modal title={modal.mode === 'edit' ? 'Edit Driver' : 'Add Driver'} onClose={() => setModal(null)} size="modal-lg">
+        <Modal
+          title={modal.mode === 'edit' ? 'Edit Driver' : 'Add Driver'}
+          onClose={() => setModal(null)}
+          size="modal-lg"
+        >
           <DriverForm initial={modal.data} vehicles={vehicles} onSave={save} onClose={() => setModal(null)} />
         </Modal>
       )}
