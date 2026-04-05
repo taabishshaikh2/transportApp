@@ -1,51 +1,56 @@
 /**
- * Generates a Trip Report DOCX matching the image format:
- * Header: Vendor Name, Vehicle Type, Period
- * Top-right: Trip Amount, Extra OLT, Rate, Amount
- * Table: SR.NO, DATE, VEHICLE NO, CHA NAME, VEHICLE TYPE,
- *        OPENING TIME, MRB ARRIVAL TIME, CLOSING TIME,
- *        PER TRIP HRS, TOTAL HRS, G.T IN HRS, G.T IN HRS Charges
+ * Trip Report DOCX Generator
+ * Matches the image format: landscape table with all trip entries.
  */
+
+let docxModule;
+try {
+  docxModule = require('docx');
+} catch (e) {
+  const paths = [
+    '/home/claude/.npm-global/lib/node_modules/docx',
+    '/usr/lib/node_modules/docx',
+    '/usr/local/lib/node_modules/docx',
+  ];
+  for (const p of paths) { try { docxModule = require(p); break; } catch (_) {} }
+  if (!docxModule) throw new Error('docx package not found. Run: npm install docx');
+}
+
 const {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   AlignmentType, BorderStyle, WidthType, ShadingType, VerticalAlign,
   PageOrientation,
-} = require('docx');
+} = docxModule;
 
-const fmt   = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtN  = (n) => Number(n || 0).toLocaleString('en-IN');
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'2-digit' }) : '';
+const fmt     = (n) => Number(n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtDate = (d) => { try { return d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : ''; } catch(_){ return ''; } };
 
-const border  = (c='000000', sz=6) => ({ style: BorderStyle.SINGLE, size: sz, color: c });
-const noBorder = () => ({ style: BorderStyle.NIL, size: 0, color: 'FFFFFF' });
-const allB = (c='000000', sz=6) => ({ top:border(c,sz), bottom:border(c,sz), left:border(c,sz), right:border(c,sz) });
-const noB  = () => ({ top:noBorder(), bottom:noBorder(), left:noBorder(), right:noBorder() });
+const nb  = () => ({ style: BorderStyle.NIL,    size: 0, color: 'FFFFFF' });
+const sb  = (sz=6) => ({ style: BorderStyle.SINGLE, size: sz, color: '000000' });
+const noB = () => ({ top:nb(), bottom:nb(), left:nb(), right:nb() });
+const allB= (sz=6) => ({ top:sb(sz), bottom:sb(sz), left:sb(sz), right:sb(sz) });
 
-const r = (text, sz=14, bold=false, color='000000') => new TextRun({ text: String(text||''), font:'Calibri', size:sz, bold, color });
-
-const p = (children, align=AlignmentType.LEFT) => new Paragraph({
-  children: Array.isArray(children) ? children : [r(children,14)],
-  alignment: align,
-  spacing: { before: 0, after: 0, line: 240 },
-});
-
-const tc = (children, width, opts={}) => new TableCell({
-  children: Array.isArray(children) ? children : [p(children, opts.align||AlignmentType.LEFT)],
+const tc = (text, width, opts={}) => new TableCell({
+  children: [new Paragraph({
+    children: [new TextRun({ text: String(text||''), font:'Calibri', size: opts.size||14, bold: opts.bold||false, color: opts.color||'000000' })],
+    alignment: opts.align || AlignmentType.LEFT,
+    spacing: { before:0, after:0, line:240 },
+  })],
   width: { size: width, type: WidthType.DXA },
   borders: opts.borders || allB(),
   shading: opts.shade ? { fill: opts.shade, type: ShadingType.CLEAR } : undefined,
   verticalAlign: VerticalAlign.CENTER,
   columnSpan: opts.span,
-  margins: { top: 40, bottom: 40, left: 60, right: 60 },
+  margins: { top:40, bottom:40, left:60, right:60 },
 });
 
 const generateTripReportDocx = async (trip, customer) => {
-  // ── LANDSCAPE: content width ≈ 14400 DXA (11" wide with 0.5" margins)
-  const TW = 14400;
+  const t   = trip     || {};
+  const cus = customer || {};
 
-  // Column widths for the detail table (12 columns)
+  // Column widths for landscape A4 (content ~14400 DXA)
   const COLS = [500, 900, 1200, 1500, 1000, 900, 1100, 900, 900, 900, 900, 900];
-  // Total = 11600, rest is padding
+  const COLS_TOTAL = COLS.reduce((a,b)=>a+b,0); // 11600
 
   const COL_HEADERS = [
     'SR.NO','DATE','VEHICLE NO','CHA NAME','VEHICLE\nTYPE',
@@ -53,107 +58,109 @@ const generateTripReportDocx = async (trip, customer) => {
     'PER TRIP\nHRS','TOTAL\nHRS','G.T IN\nHRS','G.T IN HRS\nCHARGES',
   ];
 
-  const entries = trip.entries || [];
+  const entries = t.entries || t.trip_entries || [];
 
-  // ── HEADER INFO ROWS ───────────────────────────────────────────────────────
+  // ── Info rows at top ──────────────────────────────────────────────────────
+  const TW = 14400;
+
   const infoTable = new Table({
     width: { size: TW, type: WidthType.DXA },
-    columnWidths: [1500, 3500, 2500, 2500, 2500, 1900],
+    columnWidths: [1500, 3500, 2500, 1400, 1600, 1900],
     rows: [
       new TableRow({ children: [
-        tc([p([r('Vendor Name',14,true)])],  1500, { borders: noB() }),
-        tc([p([r(trip.vendorName||'LUCKY TRANSPORT SERVICES',14,true)])], 3500, { borders: noB() }),
-        tc([p([r('',14)])], 2500, { borders: noB() }),
-        tc([p([r('Details',14,true)])],  1400, { borders: allB('888888',4) }),
-        tc([p([r('Rate',14,true)],AlignmentType.CENTER)],  1600, { borders: allB('888888',4) }),
-        tc([p([r('Amount',14,true)],AlignmentType.RIGHT)], 1900, { borders: allB('888888',4) }),
+        tc('Vendor Name', 1500, { bold:true, borders:noB() }),
+        tc(t.vendor_name||t.vendorName||'LUCKY TRANSPORT SERVICES', 3500, { bold:true, borders:noB() }),
+        tc('', 2500, { borders:noB() }),
+        tc('Details', 1400, { bold:true, borders:allB('888888',4), align:AlignmentType.CENTER }),
+        tc('Rate', 1600, { bold:true, borders:allB('888888',4), align:AlignmentType.CENTER }),
+        tc('Amount', 1900, { bold:true, borders:allB('888888',4), align:AlignmentType.RIGHT }),
       ]}),
       new TableRow({ children: [
-        tc([p([r('Vehicle Type',14,true)])], 1500, { borders: noB() }),
-        tc([p([r(trip.vehicleType||'',14)])], 3500, { borders: noB() }),
-        tc([p([r(`TRIP AMOUNT`,14)])], 2500, { borders: noB() }),
-        tc([p([r(fmtN(trip.tripAmount),14)],AlignmentType.CENTER)], 1400, { borders: allB('888888',4) }),
-        tc([p([r(fmt(trip.ratePerTrip),14)],AlignmentType.RIGHT)], 1600, { borders: allB('888888',4) }),
-        tc([p([r(fmt(trip.transportTotal),14)],AlignmentType.RIGHT)], 1900, { borders: allB('888888',4) }),
+        tc('Vehicle Type', 1500, { bold:true, borders:noB() }),
+        tc(t.vehicle_type||t.vehicleType||'', 3500, { borders:noB() }),
+        tc('TRIP AMOUNT', 2500, { borders:noB() }),
+        tc(String(t.trip_amount||t.tripAmount||0), 1400, { borders:allB('888888',4), align:AlignmentType.CENTER }),
+        tc(fmt(t.rate_per_trip||t.ratePerTrip||0), 1600, { borders:allB('888888',4), align:AlignmentType.RIGHT }),
+        tc(fmt(t.transport_total||t.transportTotal||0), 1900, { borders:allB('888888',4), align:AlignmentType.RIGHT }),
       ]}),
       new TableRow({ children: [
-        tc([p([r('Period',14,true)])], 1500, { borders: noB() }),
-        tc([p([r(`${fmtDate(trip.periodFrom)} TO ${fmtDate(trip.periodTo)}`,14)])], 3500, { borders: noB() }),
-        tc([p([r(`Extra OLT Hrs`,14)])], 2500, { borders: noB() }),
-        tc([p([r(fmt(trip.extraOltHrs),14)],AlignmentType.CENTER)], 1400, { borders: allB('888888',4) }),
-        tc([p([r('185.27.00',14)],AlignmentType.RIGHT)], 1600, { borders: allB('888888',4) }),
-        tc([p([r(fmt(trip.extraOltAmount),14)],AlignmentType.RIGHT)], 1900, { borders: allB('888888',4) }),
+        tc('Period', 1500, { bold:true, borders:noB() }),
+        tc(`${fmtDate(t.period_from||t.periodFrom)} TO ${fmtDate(t.period_to||t.periodTo)}`, 3500, { borders:noB() }),
+        tc('Extra OLT Hrs', 2500, { borders:noB() }),
+        tc(fmt(t.extra_olt_hrs||t.extraOltHrs||0), 1400, { borders:allB('888888',4), align:AlignmentType.CENTER }),
+        tc('185.27', 1600, { borders:allB('888888',4), align:AlignmentType.RIGHT }),
+        tc(fmt(t.extra_olt_amount||t.extraOltAmount||0), 1900, { borders:allB('888888',4), align:AlignmentType.RIGHT }),
       ]}),
       new TableRow({ children: [
-        tc([p([r('CHA INCLUDES:',12,true)])], 5000, { borders: noB(), span: 2 }),
-        tc([p([r('ACC Monthly Pass',14)])], 2500, { borders: noB() }),
-        tc([p([r('',14)])], 1400, { borders: noB() }),
-        tc([p([r('',14)])], 1600, { borders: noB() }),
-        tc([p([r(fmt(trip.accMonthlyPass),14)],AlignmentType.RIGHT)], 1900, { borders: allB('888888',4) }),
+        tc('CHA INCLUDES:', 5000, { bold:true, borders:noB(), span:2 }),
+        tc('ACC Monthly Pass', 2500, { borders:noB() }),
+        tc('', 1400, { borders:noB() }),
+        tc('', 1600, { borders:noB() }),
+        tc(fmt(t.acc_monthly_pass||t.accMonthlyPass||0), 1900, { borders:allB('888888',4), align:AlignmentType.RIGHT }),
       ]}),
       new TableRow({ children: [
-        tc([p([r('',14)])], 5000, { borders: noB(), span: 2 }),
-        tc([p([r('Total Amount',14,true)])], 2500, { borders: noB() }),
-        tc([p([r('',14)])], 1400, { borders: noB() }),
-        tc([p([r('',14)])], 1600, { borders: noB() }),
-        tc([p([r(fmt(trip.totalAmount),14,true)],AlignmentType.RIGHT)], 1900, { borders: allB('888888',4) }),
+        tc('', 5000, { borders:noB(), span:2 }),
+        tc('Total Amount', 2500, { bold:true, borders:noB() }),
+        tc('', 1400, { borders:noB() }),
+        tc('', 1600, { borders:noB() }),
+        tc(fmt(t.total_amount||t.totalAmount||0), 1900, { bold:true, borders:allB('888888',4), align:AlignmentType.RIGHT }),
       ]}),
     ],
   });
 
-  // ── COLUMN HEADER ROW ─────────────────────────────────────────────────────
+  // ── Column header row ──────────────────────────────────────────────────────
   const headerRow = new TableRow({
     tableHeader: true,
-    children: COL_HEADERS.map((h, i) => tc(
-      [p([r(h, 13, true, '000000')], AlignmentType.CENTER)],
-      COLS[i],
-      { borders: allB('000000', 8), shade: 'C0C0C0' }
-    )),
+    children: COL_HEADERS.map((h, i) => tc(h, COLS[i], {
+      bold: true, size: 13, borders: allB(8), shade: 'C0C0C0',
+      align: AlignmentType.CENTER,
+    })),
   });
 
-  // ── DATA ROWS ─────────────────────────────────────────────────────────────
+  // ── Data rows ──────────────────────────────────────────────────────────────
   const dataRows = entries.map((e, idx) => new TableRow({
     children: [
-      tc([p([r(String(e.srNo ?? idx+1), 12)], AlignmentType.CENTER)], COLS[0]),
-      tc([p([r(fmtDate(e.date), 12)], AlignmentType.CENTER)], COLS[1]),
-      tc([p([r(e.vehicleNo||'', 12)])], COLS[2]),
-      tc([p([r(e.chaName||'', 12)])], COLS[3]),
-      tc([p([r(e.vehicleType||'', 12)], AlignmentType.CENTER)], COLS[4]),
-      tc([p([r(e.openingTime||'', 12)], AlignmentType.CENTER)], COLS[5]),
-      tc([p([r(e.mrbArrivalTime||'', 12)], AlignmentType.CENTER)], COLS[6]),
-      tc([p([r(e.closingTime||'', 12)], AlignmentType.CENTER)], COLS[7]),
-      tc([p([r(e.perTripHrs!=null ? String(e.perTripHrs):'', 12)], AlignmentType.CENTER)], COLS[8]),
-      tc([p([r(e.totalHrs!=null ? String(e.totalHrs):'', 12)], AlignmentType.CENTER)], COLS[9]),
-      tc([p([r(e.gtInHrs!=null ? String(e.gtInHrs):'', 12)], AlignmentType.RIGHT)], COLS[10]),
-      tc([p([r(e.gtAmount!=null ? fmt(e.gtAmount):'', 12)], AlignmentType.RIGHT)], COLS[11]),
+      tc(String(e.srNo ?? e.sr_no ?? idx+1), COLS[0], { align:AlignmentType.CENTER }),
+      tc(fmtDate(e.date||e.entry_date), COLS[1], { align:AlignmentType.CENTER }),
+      tc(e.vehicleNo||e.vehicle_no||'', COLS[2] ),
+      tc(e.chaName||e.cha_name||'', COLS[3] ),
+      tc(e.vehicleType||e.vehicle_type||'', COLS[4], { align:AlignmentType.CENTER }),
+      tc(e.openingTime||e.opening_time||'', COLS[5], { align:AlignmentType.CENTER }),
+      tc(e.mrbArrivalTime||e.mrb_arrival_time||'', COLS[6], { align:AlignmentType.CENTER }),
+      tc(e.closingTime||e.closing_time||'', COLS[7], { align:AlignmentType.CENTER }),
+      tc(e.perTripHrs!=null?String(e.perTripHrs):e.per_trip_hrs!=null?String(e.per_trip_hrs):'', COLS[8], { align:AlignmentType.CENTER }),
+      tc(e.totalHrs!=null?String(e.totalHrs):e.total_hrs!=null?String(e.total_hrs):'', COLS[9], { align:AlignmentType.CENTER }),
+      tc(e.gtInHrs!=null?String(e.gtInHrs):e.gt_in_hrs!=null?String(e.gt_in_hrs):'', COLS[10], { align:AlignmentType.RIGHT }),
+      tc(e.gtAmount!=null?fmt(e.gtAmount):e.gt_amount!=null?fmt(e.gt_amount):'', COLS[11], { align:AlignmentType.RIGHT }),
     ],
   }));
 
-  // ── TOTAL ROW ─────────────────────────────────────────────────────────────
-  const totalHrsSum  = entries.reduce((s,e) => s + (e.totalHrs||0), 0);
-  const totalAmtSum  = entries.reduce((s,e) => s + (e.gtAmount||0), 0);
+  // ── Total row ──────────────────────────────────────────────────────────────
+  const totalHrs = entries.reduce((s,e)=>s+(+(e.totalHrs??e.total_hrs??0)),0);
+  const totalAmt = entries.reduce((s,e)=>s+(+(e.gtAmount??e.gt_amount??0)),0);
+  const labelWidth = COLS.slice(0,10).reduce((a,b)=>a+b,0);
 
   const totalRow = new TableRow({
     children: [
-      tc([p([r('TOTAL AMT', 13, true)], AlignmentType.RIGHT)], COLS.slice(0,10).reduce((a,b)=>a+b,0), { span: 10, borders: allB('000000',8), shade: 'E0E0E0' }),
-      tc([p([r(fmt(totalHrsSum),13,true)],AlignmentType.RIGHT)], COLS[10], { borders: allB('000000',8), shade: 'E0E0E0' }),
-      tc([p([r(fmt(totalAmtSum),13,true)],AlignmentType.RIGHT)], COLS[11], { borders: allB('000000',8), shade: 'E0E0E0' }),
+      tc('TOTAL AMT', labelWidth, { bold:true, size:13, span:10, borders:allB(8), shade:'E0E0E0', align:AlignmentType.RIGHT }),
+      tc(String(totalHrs.toFixed(2)), COLS[10], { bold:true, borders:allB(8), shade:'E0E0E0', align:AlignmentType.RIGHT }),
+      tc(fmt(totalAmt), COLS[11], { bold:true, borders:allB(8), shade:'E0E0E0', align:AlignmentType.RIGHT }),
     ],
   });
 
   const detailTable = new Table({
-    width: { size: COLS.reduce((a,b)=>a+b,0), type: WidthType.DXA },
+    width: { size: COLS_TOTAL, type: WidthType.DXA },
     columnWidths: COLS,
     rows: [headerRow, ...dataRows, totalRow],
   });
 
-  // ── SIGNATURE ROW ─────────────────────────────────────────────────────────
+  // ── Signature row ──────────────────────────────────────────────────────────
   const sigTable = new Table({
     width: { size: TW, type: WidthType.DXA },
     columnWidths: [7200, 7200],
     rows: [new TableRow({ children: [
-      tc([p([r('DHL Representatives Sign', 14, true)])], 7200, { borders: noB() }),
-      tc([p([r('Vendor Sign', 14, true)], AlignmentType.RIGHT)], 7200, { borders: noB() }),
+      tc('DHL Representatives Sign', 7200, { bold:true, size:14, borders:noB() }),
+      tc('Vendor Sign', 7200, { bold:true, size:14, borders:noB(), align:AlignmentType.RIGHT }),
     ]})],
   });
 
@@ -167,9 +174,9 @@ const generateTripReportDocx = async (trip, customer) => {
       },
       children: [
         infoTable,
-        new Paragraph({ children: [new TextRun('')], spacing: { before: 80, after: 80 } }),
+        new Paragraph({ spacing:{ before:80, after:80 }, children:[new TextRun('')] }),
         detailTable,
-        new Paragraph({ children: [new TextRun('')], spacing: { before: 120, after: 40 } }),
+        new Paragraph({ spacing:{ before:120, after:40 }, children:[new TextRun('')] }),
         sigTable,
       ],
     }],
